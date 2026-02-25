@@ -57,6 +57,7 @@ export const fileApi = {
 export const taskApi = {
   // ========== 小说任务 ==========
   createNovelTask: (data) => request.post('/task/novel/create', data),
+  createNovelTasksFromWholeText: (data) => request.post('/task/novel/createFromWholeText', data),
   submitNovelTask: (id) => request.post(`/task/novel/submit/${id}`),
   listNovelTasks: (projectId) => request.get(`/task/novel/list/${projectId}`),
 

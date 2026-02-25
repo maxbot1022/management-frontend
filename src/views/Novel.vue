@@ -8,7 +8,7 @@
     </div>
 
     <!-- 创建任务对话框 -->
-    <el-dialog v-model="showCreateDialog" title="新建小说整理任务" width="700px">
+    <el-dialog v-model="showCreateDialog" title="整本小说分段创建任务" width="700px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="选择项目" required>
           <el-select v-model="form.projectId" placeholder="请选择项目" style="width: 100%">
@@ -21,8 +21,8 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="任务名称" required>
-          <el-input v-model="form.taskName" placeholder="请输入任务名称" />
+        <el-form-item label="任务名前缀" required>
+          <el-input v-model="form.taskNamePrefix" placeholder="例如：斗破苍穹 第一卷" />
         </el-form-item>
 
         <el-form-item label="上传小说">
@@ -57,15 +57,28 @@
 
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="createTask" :loading="loading">创建</el-button>
+        <el-button type="primary" @click="createTask" :loading="loading">一键创建分段任务</el-button>
       </template>
     </el-dialog>
 
     <!-- 任务列表 -->
     <el-card>
-      <template #header><span>整理任务列表</span></template>
+      <template #header>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span>整理任务列表</span>
+          <el-button
+            type="primary"
+            size="small"
+            @click="batchSubmit"
+            :disabled="!selectedTasks.length"
+          >
+            批量提交处理
+          </el-button>
+        </div>
+      </template>
       
-      <el-table :data="tasks" v-loading="loading">
+      <el-table :data="tasks" v-loading="loading" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="taskName" label="任务名称" />
         <el-table-column prop="projectId" label="所属项目">
           <template #default="scope">
@@ -120,10 +133,11 @@ const showResultDialog = ref(false)
 const loading = ref(false)
 const currentFile = ref(null)
 const currentResult = ref('')
+const selectedTasks = ref([])
 
 const form = ref({
   projectId: '',
-  taskName: '',
+  taskNamePrefix: '',
   prompt: ''
 })
 
@@ -163,29 +177,34 @@ const handleFileChange = (file) => {
 }
 
 const createTask = async () => {
-  if (!form.value.projectId || !form.value.taskName) {
-    ElMessage.warning('请填写必要信息')
+  if (!form.value.projectId || !form.value.taskNamePrefix) {
+    ElMessage.warning('请填写项目和任务名前缀')
+    return
+  }
+
+  if (!currentFile.value) {
+    ElMessage.warning('请上传整本小说 txt')
     return
   }
 
   loading.value = true
   try {
-    // 先上传文件
-    let textUrl = ''
-    if (currentFile.value) {
-      const uploadRes = await fileApi.uploadText(currentFile.value)
-      textUrl = uploadRes.data.url
-    }
+    // 1. 上传整本小说文本
+    const uploadRes = await fileApi.uploadText(currentFile.value)
+    const textUrl = uploadRes.data.url
 
-    // 创建任务
-    await taskApi.createNovelTask({
-      ...form.value,
-      originalTextUrl: textUrl
+    // 2. 调用后端接口，自动分段并批量创建任务
+    const res = await taskApi.createNovelTasksFromWholeText({
+      projectId: form.value.projectId,
+      taskNamePrefix: form.value.taskNamePrefix,
+      originalTextUrl: textUrl,
+      prompt: form.value.prompt
     })
 
-    ElMessage.success('创建成功')
+    const count = Array.isArray(res.data) ? res.data.length : 0
+    ElMessage.success(`创建成功，共 ${count} 条分段任务`)
     showCreateDialog.value = false
-    form.value = { projectId: '', taskName: '', prompt: '' }
+    form.value = { projectId: '', taskNamePrefix: '', prompt: '' }
     currentFile.value = null
     loadTasks()
   } catch (error) {
@@ -208,6 +227,32 @@ const submitTask = async (id) => {
 const viewResult = (task) => {
   currentResult.value = task.resultJson || '暂无结果'
   showResultDialog.value = true
+}
+
+const handleSelectionChange = (rows) => {
+  selectedTasks.value = rows
+}
+
+const batchSubmit = async () => {
+  const pending = selectedTasks.value.filter(t => t.status === 0)
+  if (!pending.length) {
+    ElMessage.warning('请选择状态为待处理的任务')
+    return
+  }
+
+  loading.value = true
+  try {
+    for (const t of pending) {
+      await taskApi.submitNovelTask(t.id)
+    }
+    ElMessage.success(`已提交 ${pending.length} 条任务`)
+    loadTasks()
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('批量提交失败')
+  } finally {
+    loading.value = false
+  }
 }
 
 const getProjectName = (id) => {
